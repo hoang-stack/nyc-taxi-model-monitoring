@@ -15,7 +15,13 @@ import pandas as pd  # noqa: E402
 from matplotlib.colors import LogNorm  # noqa: E402
 
 from taximon.drift import Threshold  # noqa: E402
-from taximon.evaluate import COVID_SHOCK, add_aggregates, degraded, score  # noqa: E402
+from taximon.evaluate import (  # noqa: E402
+    COVID_SHOCK,
+    add_aggregates,
+    degraded,
+    score,
+    score_fixed,
+)
 
 SURFACE, INK, INK_2, MUTED = "#fcfcfb", "#0b0b0b", "#52514e", "#898781"
 GRID, BASELINE = "#e1e0d9", "#c3c2b7"
@@ -27,7 +33,9 @@ ACCENT, ORANGE, GREEN, YELLOW, PINK, VIOLET = (
     "#e87ba4",
     "#6250d6",
 )
+VENDOR_OUTAGE = pd.Timestamp("2022-11-14")  # vendor 1 almost absent from the records that week
 ALERT_SIGNALS = {  # signal -> label in the alert map (a readable subset of all signals)
+    "volume_change": "traffic volume change",
     "dle_mae": "DLE estimated MAE",
     "domain_auc": "domain classifier AUC",
     "psi:prediction": "PSI of predictions",
@@ -80,33 +88,50 @@ def _dates(ax) -> None:
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
 
 
-def _shock_line(ax, label=True) -> None:
+def _shock_line(ax, label=True, where="top") -> None:
     ax.axvline(COVID_SHOCK, color=BASELINE, lw=0.9, zorder=0)
     if label:
         ax.annotate(
             "NY emergency, 7 Mar 2020",
-            (COVID_SHOCK, 1),
+            (COVID_SHOCK, 1 if where == "top" else 0),
             xycoords=("data", "axes fraction"),
-            xytext=(4, -2),
+            xytext=(4, -2 if where == "top" else 4),
             textcoords="offset points",
             fontsize=8,
             color=MUTED,
-            va="top",
+            va="top" if where == "top" else "bottom",
         )
 
 
 def plot_shock(weekly: pd.DataFrame, quality: pd.DataFrame, out: Path) -> Path:
-    fig, (a1, a2) = plt.subplots(2, 1, figsize=(9.6, 5.2), sharex=True)
-    q = quality.loc[quality.index >= weekly.index.min()]
+    fig, (a1, a2, a3) = plt.subplots(
+        3, 1, figsize=(9.6, 6.6), sharex=True, gridspec_kw={"height_ratios": [1, 1, 0.8]}
+    )
+    q = quality.loc[(quality.index >= weekly.index.min()) & (quality.index <= weekly.index.max())]
     a1.plot(q.index, q["trips_estimated"] / 1e6, color=INK)
     a1.set_ylabel("trips per week (M)")
     a1.set_ylim(bottom=0)
-    a1.set_title("The shock: yellow-taxi traffic collapsed, and the trips that remained got faster")
+    a1.annotate(
+        "vendor 1 missing\nfrom the records",
+        (VENDOR_OUTAGE, q.loc[VENDOR_OUTAGE, "trips_estimated"] / 1e6),
+        xytext=(-10, -34),
+        textcoords="offset points",
+        fontsize=8,
+        color=MUTED,
+        ha="right",
+        arrowprops={"arrowstyle": "-", "color": MUTED, "lw": 0.8},
+    )
+    a1.set_title(
+        "The shock: traffic collapsed, the trips that remained got faster, data got messier"
+    )
     a2.plot(weekly.index, weekly["mean_speed_mph"], color=ACCENT)
     a2.set_ylabel("mean trip speed (mph)")
-    for ax in (a1, a2):
+    a3.plot(q.index, 100 * q["any_check_failed"], color=ORANGE)
+    a3.set_ylabel("rows failing a\nquality check (%)")
+    a3.set_ylim(bottom=0)
+    for ax in (a1, a2, a3):
         _shock_line(ax, label=ax is a1)
-    _dates(a2)
+    _dates(a3)
     return _save(fig, out / "shock.png")
 
 
@@ -131,7 +156,7 @@ def plot_error(weekly: pd.DataFrame, out: Path) -> Path:
     )
     ax.set_ylabel("MAE (minutes)")
     ax.set_ylim(bottom=0)
-    _shock_line(ax)
+    _shock_line(ax, where="bottom")
     _dates(ax)
     ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.1), ncol=2, fontsize=9)
     ax.set_title("The frozen 2019 model's error, week by week")
@@ -160,16 +185,16 @@ def plot_alert_map(weekly: pd.DataFrame, out: Path) -> Path:
     ax.axvspan(x[0] - step / 2, x[ref.to_numpy()][-1] + step / 2, color=GRID, alpha=0.5, lw=0)
     ax.annotate(
         "reference weeks\n(thresholds set here)",
-        (x[0], len(rows) - 0.4),
+        (x[0] + 3, 0),
         fontsize=8,
         color=MUTED,
-        va="bottom",
+        va="center",
     )
     _shock_line(ax, label=False)
     ax.xaxis_date()
     _dates(ax)
     ax.set_xlim(x[0] - step, x[-1] + step)
-    ax.set_title("Weeks in alert: every drift signal fires for three years; the error does not")
+    ax.set_title("Weeks in alert: drift signals fire for three years; the error does not")
     return _save(fig, out / "alert_map.png")
 
 
@@ -234,7 +259,7 @@ def plot_policies(pw: pd.DataFrame, out: Path) -> Path:
             ax.plot(g.index, smooth, color=color, label=name, lw=1.4)
     ax.set_ylabel("MAE (minutes, 4-week mean)")
     ax.set_ylim(bottom=0)
-    _shock_line(ax)
+    _shock_line(ax, where="bottom")
     _dates(ax)
     ax.legend(loc="center left", bbox_to_anchor=(1.0, 0.5), fontsize=8.5)
     ax.set_title("Retraining policies replayed on the real stream")
@@ -268,9 +293,12 @@ def build_report(results_dir="results") -> Path:
         "",
         "## Signals",
         "",
+        f"Degraded weeks are {truth[mon].mean():.3f} of the monitored weeks: the average precision "
+        "of a signal that ranks weeks at random.",
+        "",
         "| Signal | Weeks in alert | Precision | Recall | False alarms before the shock "
-        "| First alert after the shock | Spearman with MAE |",
-        "| --- | ---: | ---: | ---: | ---: | --- | ---: |",
+        "| First alert after the shock | Average precision | Spearman with MAE |",
+        "| --- | ---: | ---: | ---: | ---: | --- | ---: | ---: |",
     ]
     for s, row in det.iterrows():
         first = row["first_alert_after_shock"]
@@ -278,7 +306,24 @@ def build_report(results_dir="results") -> Path:
             f"| {s} | {row['alert_weeks']} | {row['precision']:.2f} | {row['recall']:.2f} | "
             f"{row['false_alarms_before_shock']} | "
             f"{pd.Timestamp(first).date() if pd.notna(first) else '–'} | "
-            f"{row['spearman_with_error']:.2f} |"
+            f"{row['average_precision']:.2f} | {row['spearman_with_error']:.2f} |"
+        )
+    fixed = score_fixed(weekly)
+    fixed.to_csv(r / "psi_fixed_thresholds.csv")
+    lines += [
+        "",
+        "## PSI against the textbook cut-offs (0.1 moderate, 0.25 major)",
+        "",
+        "| Signal | PSI above | Weeks in alert | Precision | Recall "
+        "| First alert after the shock |",
+        "| --- | ---: | ---: | ---: | ---: | --- |",
+    ]
+    for (sig, th), row in fixed.iterrows():
+        first = row["first_alert_after_shock"]
+        prec = "–" if pd.isna(row["precision"]) else f"{row['precision']:.2f}"
+        lines.append(
+            f"| {sig} | {th} | {row['alert_weeks']} | {prec} | {row['recall']:.2f} | "
+            f"{pd.Timestamp(first).date() if pd.notna(first) else '–'} |"
         )
     pol_path = r / "policies_weekly.csv"
     if pol_path.exists():
@@ -294,7 +339,7 @@ def build_report(results_dir="results") -> Path:
             "| --- | ---: | ---: | ---: | ---: |",
         ]
         lines += [
-            f"| {name} | {row['retrains']} | {row['mae_all']:.3f} | {row['mae_shock']:.3f} | "
+            f"| {name} | {int(row['retrains'])} | {row['mae_all']:.3f} | {row['mae_shock']:.3f} | "
             f"{row['mae_2022']:.3f} |"
             for name, row in tab.iterrows()
         ]

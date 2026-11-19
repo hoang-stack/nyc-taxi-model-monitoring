@@ -56,3 +56,15 @@ def test_threshold_band():
     assert t.alerts([1.0, 2.0]).tolist() == [False, True]
     t2 = drift.Threshold(k=3, two_sided=True).fit([1.0, 1.1, 0.9, 1.0, 1.05, 0.95])
     assert t2.alerts([0.0]).tolist() == [True]
+
+
+def test_average_precision():
+    from taximon.evaluate import average_precision
+
+    assert average_precision([3, 2, 1, 0], [1, 1, 0, 0]) == pytest.approx(1.0)
+    assert average_precision([0, 1, 2, 3], [1, 1, 0, 0]) == pytest.approx((1 / 3 + 2 / 4) / 2)
+    metrics = pytest.importorskip("sklearn.metrics")
+    rng = np.random.default_rng(4)
+    y = rng.integers(0, 2, 300)
+    s = y + rng.normal(size=300)
+    assert average_precision(s, y) == pytest.approx(metrics.average_precision_score(y, s))
