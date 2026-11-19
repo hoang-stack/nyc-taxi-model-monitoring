@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "taximon"
+version = "0.1.0"
+description = "Monitoring an ETA model through the COVID-19 shock: drift signals, label-free performance estimation, retraining policies, and a monitored prediction service."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+# What the prediction service needs (and all the Docker image installs).
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.1",
+    "lightgbm>=4.3",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "prometheus-client>=0.20",
+]
+
+[project.optional-dependencies]
+study = ["pyarrow>=14", "matplotlib>=3.8"]  # download, study, report
+dev = [
+    "taximon[study]",
+    "pytest>=8",
+    "ruff>=0.5",
+    "httpx>=0.27",
+    "scipy>=1.11",
+    "scikit-learn>=1.4",
+]
+
+[project.scripts]
+taximon = "taximon.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]

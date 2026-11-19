@@ -1,0 +1,22 @@
+groups:
+  - name: taximon
+    rules:
+      - alert: FeatureDrift
+        # PSI > 0.2 on the last 1000 requests, sustained (one noisy window is not a page)
+        expr: taximon_feature_psi{feature=~"trip_distance|hour|pu_borough|do_borough"} > 0.2
+        for: 1h
+        labels: {severity: ticket}
+        annotations:
+          summary: "Input drift on {{ $labels.feature }} (PSI {{ $value | printf \"%.2f\" }})"
+      - alert: PredictionDrift
+        expr: taximon_feature_psi{feature="prediction"} > 0.2
+        for: 1h
+        labels: {severity: ticket}
+        annotations:
+          summary: "ETA distribution moved (PSI {{ $value | printf \"%.2f\" }})"
+      - alert: SlowPredictions
+        expr: histogram_quantile(0.99, rate(taximon_latency_seconds_bucket[5m])) > 0.1
+        for: 10m
+        labels: {severity: page}
+        annotations:
+          summary: "p99 latency above 100 ms"

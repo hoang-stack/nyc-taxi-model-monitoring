@@ -1,0 +1,9 @@
+data/
+results/model_*/
+models/
+logs/
+__pycache__/
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
